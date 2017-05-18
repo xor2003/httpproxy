@@ -26,6 +26,10 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 
+#include <boost/asio/io_service.hpp>
+#include <boost/bind.hpp>
+#include <boost/thread/thread.hpp>
+
 #include "HttpRequest.h"
 #include "HttpCommon.h"
 #include "HttpFilter.h"
@@ -36,22 +40,24 @@
 
 
 HttpClientRequestProxy::HttpClientRequestProxy(int       client_fd_i,
-                               cache_t *    cache_i,
-                               HttpFilter* bfilter_i,
-                               HttpStatistics* hstatistics_i,
-                               pthread_mutex_t *    mutex_i):
+        cache_t *    cache_i,
+        HttpFilter* bfilter_i,
+        HttpStatistics* hstatistics_i,
+        pthread_mutex_t *    mutex_i):
     m_client_fd(client_fd_i),
     m_cache(cache_i),
     m_bfilter(bfilter_i),
     m_hstatistics(hstatistics_i),
     m_mutex(mutex_i)
 {
+    /*
     // Make threads to deal with logic
     pthread_t thread_id;              // We're going to detach, IDGAF this variable can die
     pthread_create (&thread_id, NULL,
                     HttpClientRequestProxy::executer,
                     static_cast<void *>(this) );
     pthread_detach (thread_id);
+    */
 }
 
 HttpClientRequestProxy::~HttpClientRequestProxy()
@@ -63,15 +69,16 @@ HttpClientRequestProxy::~HttpClientRequestProxy()
 /**
  * @brief Calls client_connected()
  */
-void *
-HttpClientRequestProxy::executer (void *thread_p)
+void
+HttpClientRequestProxy::executer ()
 {
     // Cast client_fd into an int*, dereference it, call the right function
-    static_cast<HttpClientRequestProxy *>(thread_p)->run ();
+    //static_cast<HttpClientRequestProxy *>(thread_p)->run ();
+    run();
 
-    delete static_cast<HttpClientRequestProxy *>(thread_p);
+    delete static_cast<HttpClientRequestProxy *>(this);
 
-    return NULL;
+    return;// NULL;
 }
 
 /**
@@ -263,13 +270,39 @@ main (int argc, char *argv[])
     pthread_mutex_t  cache_mutex;
     pthread_mutex_init (&cache_mutex, NULL);
 
+    /*
+     * Create an asio::io_service and a thread_group (through pool in essence)
+     */
+    boost::asio::io_service ioService;
+    boost::thread_group threadpool;
+
+
+    /*
+     * This will start the ioService processing loop. All tasks
+     * assigned with ioService.post() will start executing.
+     */
+    boost::asio::io_service::work work(ioService);
+
+    /*
+     * This will add threads to the thread pool. (You could just put it in a for loop)
+     */
+    for(size_t i=0; i<20; i++)
+    {
+
+
+        threadpool.create_thread(
+            boost::bind(&boost::asio::io_service::run, &ioService)
+        );
+    }
+
+
     //printf("server: waiting for connections...\n");
     int request_counter=0;
     // Main accept loop
     for (;;)
     {
         struct sockaddr_storage
-                their_addr;             // connector's address information
+            their_addr;             // connector's address information
         char
         s[INET6_ADDRSTRLEN];
         socklen_t
@@ -283,7 +316,7 @@ main (int argc, char *argv[])
 #endif
                             &sin_size);
         if (client_fd == -1)
-    {
+        {
             perror ("accept");
             continue;
         }
@@ -292,11 +325,31 @@ main (int argc, char *argv[])
         inet_ntop (their_addr.ss_family, get_in_addr ((struct sockaddr *) &their_addr), s, sizeof s);
 
         // Create and run working thread
-        new HttpClientRequestProxy(client_fd, &cache, &filter, &hstatistics, &cache_mutex);
+        HttpClientRequestProxy* request = new HttpClientRequestProxy(client_fd, &cache, &filter, &hstatistics, &cache_mutex);
+
+        /*
+         * This will assign tasks to the thread pool.
+         * More about boost::bind: "http://www.boost.org/doc/libs/1_54_0/libs/bind/bind.html#with_functions"
+         */
+        ioService.post(boost::bind(&HttpClientRequestProxy::executer, request));
 
         // Display site statistics each 5 request
         ++request_counter;
         if ((request_counter % 5)==0) hstatistics.display();
     }
+
+    /*
+     * This will stop the ioService processing loop. Any tasks
+     * you add behind this point will not execute.
+    */
+    ioService.stop();
+
+    /*
+     * Will wait till all the threads in the thread pool are finished with
+     * their assigned tasks and 'join' them. Just assume the threads inside
+     * the threadpool will be destroyed by this method.
+     */
+    threadpool.join_all();
+
     return 0;
 }

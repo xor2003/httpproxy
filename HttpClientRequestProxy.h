@@ -34,7 +34,7 @@ public:
   ~HttpClientRequestProxy ();
   /// Working thread executer
   /// @param thread_p		(in)
-  static void * executer (void* thread_p);
+  void executer();
 protected:
   int  run ();
 };

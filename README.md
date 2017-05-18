@@ -2,7 +2,7 @@
 Code Description
 ================
 
-A simple implementation of an HTTP proxy server and client in C++ using sockets and pthreads. **Basic** server-side caching is also implemented.
+A simple implementation of an HTTP proxy server and client in C++ using sockets and boost thread pool. **Basic** server-side caching is also implemented.
 
 Additional features:
 +Porting to C++, using hash maps
